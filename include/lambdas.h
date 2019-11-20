@@ -4,23 +4,52 @@
 #include <string>
 #include <memory>
 #include <ostream>
+#include <cassert>
+#include <vector>
+
+template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
+template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
 struct empty_userdata
 {};
 
-struct variable_t;
-
-struct binary_operation;
-
 template<typename UD>
 struct parsing_context
 {
-    template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
-    template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
+    struct variable_t;
+    struct binary_operation;
 
     using ast_node = std::variant<variable_t, binary_operation>;
+
     struct ast_record
     {
+        template<typename UData2>
+        ast_record(UData2&& data, ast_node node)
+            : userdata(std::forward<UData2>(data)),
+              node(std::move(node))
+        {}
+
+        friend std::ostream& operator<<(std::ostream& out, ast_record const& rec)
+        {
+            std::visit(overloaded{
+                           [&out] (variable_t const& var) { out << var.name; },
+                           [&out] (binary_operation const& op)
+            {
+                out << '(';
+                switch (op.tag)
+                {
+                case parsing_context<UD>::node_tag::FORALL:
+                    out << '\\' << *op.args[0] << "." << *op.args[1];
+                    break;
+                case parsing_context<UD>::node_tag::APPLICATION:
+                    out << *op.args[0] << " " << *op.args[1];
+                }
+                out << ')';
+            }}, rec.node);
+
+            return out;
+        }
+
         UD          userdata;
         ast_node    node;
     };
@@ -49,11 +78,18 @@ struct parsing_context
         ast_record_ptr  args[2];
     };
 
+    enum class token_type
+    {
+        EMPTY,
+        FORALL_VARNAME,
+        VARNAME,
+        OPEN_PARANTH,
+        CLOSING_PARANTH,
+    };
 
 
-    parsing_context(std::string_view str)
-        : tail(std::move(str)),
-          current_token(token_type::EMPTY)
+    parsing_context()
+        : current_token(token_type::EMPTY)
     {}
 
     token_type get_token()
@@ -65,7 +101,8 @@ struct parsing_context
     {
         skip_ws();
 
-        assert(!tail.empty());
+        if (tail.empty())
+            return current_token = token_type::EMPTY;
 
         switch (tail[0])
         {
@@ -76,7 +113,7 @@ struct parsing_context
             skip_ws();
             assert(tail[0] == '.');
             skip_chars();
-            return current_token = token_type::FORALL_VARNAME;;
+            return current_token = token_type::FORALL_VARNAME;
         case 'a'...'z':
             read_var();
             return current_token = token_type::VARNAME;
@@ -88,7 +125,7 @@ struct parsing_context
             return current_token = token_type::CLOSING_PARANTH;
         default:
             assert(false && "Unexpected state");
-            break;
+            return current_token = token_type::EMPTY;
         }
     }
 
@@ -104,19 +141,11 @@ struct parsing_context
 
     ast_record_ptr parse_lambda(std::string_view str)
     {
-        return parse_expression(context);
+        tail = std::move(str);
+        return parse_expression();
     }
 
 private:
-
-    enum class token_type
-    {
-        EMPTY,
-        FORALL_VARNAME,
-        VARNAME,
-        OPEN_PARANTH,
-        CLOSING_PARANTH,
-    };
 
     void skip_chars(size_t cnt = 1)
     {
@@ -136,8 +165,8 @@ private:
     constexpr bool is_varname_char(char c) const
     {
         return (c >= 'a' && c <= 'z')
-                || std::isspace(c)
-                || c == '\'';
+                || c == '\''
+                || (c >= '0' && c <= '9');
     }
 
     void read_var()
@@ -154,80 +183,95 @@ private:
     }
 
 
-    static inline
-    ast_record_ptr parse_expression(parsing_context& contxt);
-
-
-    static inline
-    ast_record_ptr parse_variable(parsing_context& contxt)
+    ast_record_ptr parse_variable()
     {
-        auto token = contxt.get_token();
+        auto token = get_token();
 
         assert(token == token_type::VARNAME);
 
         return std::make_unique<ast_record>(UD{},
-                                                        variable_t(std::move(contxt.get_varname())));
+                                            variable_t{std::move(get_varname())});
     }
 
-    static inline
-    ast_record_ptr parse_atom(parsing_context& contxt)
+    ast_record_ptr parse_atom()
     {
-        auto token = contxt.get_token();
+        auto token = get_token();
 
         switch (token)
         {
         case token_type::OPEN_PARANTH:
         {
-            auto result = parse_expression(contxt);
-            auto tok = contxt.get_token();
+            auto result = parse_expression();
+            auto tok = get_token();
             assert(tok == token_type::CLOSING_PARANTH);
             return result;
         }
         case token_type::VARNAME:
-            return parse_variable(contxt);
+            return parse_variable();
         default:
             assert(false && "Unexpected token in for atom");
-            break;
+            return {nullptr};
         }
     }
 
-    static inline
     ast_record_ptr combine_binary_op(std::vector<ast_record_ptr>& args,
-                                               node_tag tag)
+                                        node_tag tag)
     {
-        while (args.size() > 1)
+        switch (tag)
         {
-            ast_record_ptr rhs = std::move(args.back());
-            args.pop_back();
-            ast_record_ptr lhs = std::move(args.back());
-            args.pop_back();
+        case node_tag::FORALL:
+            while (args.size() > 1)
+            {
+                ast_record_ptr rhs = std::move(args.back());
+                args.pop_back();
+                ast_record_ptr lhs = std::move(args.back());
+                args.pop_back();
 
-            args.push_back(std::make_unique<ast_record>(UD{},
-                                                                  binary_operation(tag,
-                                                                                   std::move(lhs),
-                                                                                   std::move(rhs))));
+                args.push_back(std::make_unique<ast_record>(UD{},
+                                                              binary_operation(tag,
+                                                                               std::move(lhs),
+                                                                               std::move(rhs))));
+            }
+        case node_tag::APPLICATION:
+            for (size_t l = 0, r = args.size() - 1; l < r; ++l, --r)
+                std::swap(args[l], args[r]);
+
+            while (args.size() > 1)
+            {
+                ast_record_ptr lhs = std::move(args.back());
+                args.pop_back();
+                ast_record_ptr rhs = std::move(args.back());
+                args.pop_back();
+
+                args.push_back(std::make_unique<ast_record>(UD{},
+                                                              binary_operation(tag,
+                                                                               std::move(lhs),
+                                                                               std::move(rhs))));
+            }
         }
 
         return std::move(args[0]);
     }
 
-    static inline
-    ast_record_ptr parse_application(parsing_context& contxt)
+    ast_record_ptr parse_application()
     {
         std::vector<ast_record_ptr> applicants;
-        applicants.push_back(parse_atom(contxt));
+        applicants.push_back(parse_atom());
 
         do
         {
-            auto tok = contxt.read_token();
+            auto tok = read_token();
 
             switch (tok)
             {
             case token_type::OPEN_PARANTH:
             case token_type::VARNAME:
-                applicants.push_back(parse_atom(contxt));
+                applicants.push_back(parse_atom());
+                break;
             case token_type::FORALL_VARNAME:
+                applicants.push_back(parse_expression(1));
             case token_type::CLOSING_PARANTH:
+            case token_type::EMPTY:
                 return combine_binary_op(applicants, node_tag::APPLICATION);
             default:
                 assert(false && "Unexpected token for parse_application");
@@ -236,26 +280,24 @@ private:
         } while (true);
     }
 
-    static inline
-    ast_record_ptr parse_expression(parsing_context& contxt)
+    ast_record_ptr parse_expression(bool token_read = false)
     {
-        auto tok = contxt.read_token();
+        auto tok = (token_read) ? get_token() : read_token();
         switch (tok)
         {
         case token_type::FORALL_VARNAME:
         {
             ast_record_ptr lhs
-                    = std::make_unique<ast_record>(UD{},
-                                                              variable_t(std::move(contxt.get_varname())));
-            auto rhs = parse_expression(contxt);
+                    = std::make_unique<ast_record>(UD{}, variable_t{std::move(get_varname())});
+            auto rhs = parse_expression();
 
             return std::make_unique<ast_record>(UD{},
-                                                          binary_operation(node_tag::FORALL,
-                                                                           std::move(lhs),
-                                                                           std::move(rhs)));
+                                                  binary_operation(node_tag::FORALL,
+                                                                   std::move(lhs),
+                                                                   std::move(rhs)));
         }
         default:
-            return parse_application(contxt);
+            return parse_application();
         }
     }
 
@@ -264,32 +306,3 @@ private:
     token_type          current_token;
     std::string         varname;
 };
-
-template<typename UD>
-std::ostream& operator<<(std::ostream& out, parsing_context::ast_record const& rec)
-{
-    std::visit(overloaded(
-                   [&out] (variable_t const& var) { out << var.name; },
-                   [&out] (binary_operation const& op)
-    {
-        out << '(';
-        switch (op.tag)
-        {
-        case node_tag::FORALL:
-            out << '\\' << *op.args[0] << "." << *op.args[1];
-            break;
-        case node_tag::APPLICATION:
-            out << *op.args[0] << " " << *op.args[1];
-        }
-        out << ')';
-    }), rec.node);
-
-    return out;
-}
-
-
-namespace lambdas
-{
-
-
-}

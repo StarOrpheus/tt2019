@@ -1,19 +1,33 @@
 #include "include/lambdas.h"
 
-#include <vector>
+
+#include <cstring>
 #include <unistd.h>
+#include <iostream>
 
 int main()
 {
     std::vector<char> buff(1024 * 1024, 0);
+    size_t sz = 0;
 
-    auto rd = read(0, buff.data(), buff.size());
+    do
+    {
+        auto rd = read(0, buff.data() + sz, buff.size() - sz);
+        if (rd < 0)
+        {
+            std::cerr << "Error reading stdin: " << strerror(errno) << std::endl;
+            return -1;
+        }
 
-    if (rd <= 0)
-        return -1;
+        if (rd == 0) break;
 
-    auto urd = static_cast<size_t>(rd);
-    auto ast_rec = lambdas::parse_lambda<lambdas::empty_ud>(std::string_view(buff.data(), urd));
+        sz += static_cast<size_t>(rd);
+    } while (true);
+
+    parsing_context<empty_userdata> contxt;
+    auto result = contxt.parse_lambda({buff.data(), sz});
+
+    std::cout << *result << std::endl;
 
     return 0;
 }
