@@ -79,6 +79,60 @@ TEST(author, sample2)
     test_str(str, result);
 }
 
+
+struct hashing_userdata
+{
+    /**
+     * Public "secret" is ridiculous, but anyway
+     */
+    constexpr static size_t secret = 31;
+
+    explicit hashing_userdata(ast_record<hashing_userdata>* owner)
+    {
+        assert(&owner->userdata == this);
+
+        std::visit(
+                overloaded {
+                    [this] (variable_t const& var)
+                    {
+                        hashcode = std::hash<std::string>()(var.name);
+                    },
+                    [this] (binary_operation<hashing_userdata> const& op)
+                    {
+                        hashcode = op.args[0]->userdata.hashcode * 31u;
+                        hashcode += (op.tag == node_tag::FORALL ? 42u : 971u);
+                        hashcode *= 31u;
+                        hashcode += op.args[0]->userdata.hashcode;
+                        hashcode *= 31u;
+                        hashcode += 0xcaffab27;
+                    },
+                },
+                owner->node
+         );
+    };
+
+    size_t hashcode{0};
+};
+
+TEST(correctness, userdata_test)
+{
+    auto x_hash = std::hash<std::string>()("x");
+
+    parsing_context<hashing_userdata> contxt;
+
+    auto ast_rec = contxt.parse_lambda({"x", 1});
+    assert(ast_rec->userdata.hashcode == x_hash);
+
+    contxt.reset();
+    ast_rec = contxt.parse_lambda({"\\x.x", 4});
+    assert(ast_rec->userdata.hashcode == (((((x_hash * 31u) + 42) * 31u) + x_hash ) * 31) + 0xcaffab27);
+
+    contxt.reset();
+    ast_rec = contxt.parse_lambda({"x x", 3});
+    assert(ast_rec->userdata.hashcode == (((((x_hash * 31u) + 971u) * 31u) + x_hash ) * 31) + 0xcaffab27);
+}
+
+
 int main(int argc, char* argv[])
 {
     umask(0);

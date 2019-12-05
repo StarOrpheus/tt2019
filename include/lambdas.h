@@ -10,74 +10,82 @@
 template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
+template<typename UD>
+struct binary_operation;
+
+struct variable_t
+{
+    std::string name;
+};
+
+enum class node_tag
+{
+    FORALL,
+    APPLICATION
+};
+
+template<typename UD>
+using ast_node = std::variant<variable_t, binary_operation<UD>>;
+
+template<typename UD>
+struct ast_record
+{
+    explicit ast_record(ast_node<UD> node)
+            : node(std::move(node)),
+              userdata(this)
+    {}
+
+    friend std::ostream& operator<<(std::ostream& out, ast_record const& rec)
+    {
+        std::visit(overloaded{
+                [&out] (variable_t const& var) { out << var.name; },
+                [&out] (binary_operation<UD> const& op)
+                {
+                    out << '(';
+                    switch (op.tag)
+                    {
+                        case node_tag::FORALL:
+                            out << '\\' << *op.args[0] << "." << *op.args[1];
+                            break;
+                        case node_tag::APPLICATION:
+                            out << *op.args[0] << " " << *op.args[1];
+                    }
+                    out << ')';
+                }}, rec.node);
+
+        return out;
+    }
+
+    ast_node<UD>    node;
+    UD              userdata;
+};
+
+template<typename UD>
+using ast_record_ptr = std::unique_ptr<ast_record<UD>>;
+
+template<typename UD>
+struct binary_operation
+{
+    binary_operation(node_tag tag, ast_record_ptr<UD> lhs, ast_record_ptr<UD> rhs)
+            : tag(tag),
+              args{std::move(lhs), std::move(rhs)}
+    {}
+
+    node_tag            tag;
+    ast_record_ptr<UD>  args[2];
+};
+
 struct empty_userdata
-{};
+{
+    explicit empty_userdata(ast_record<empty_userdata>* owner)
+    {
+        assert(&owner->userdata == this);
+    };
+};
 
 template<typename UD>
 struct parsing_context
 {
-    struct variable_t;
-    struct binary_operation;
-
-    using ast_node = std::variant<variable_t, binary_operation>;
-
-    struct ast_record
-    {
-        template<typename UData2>
-        ast_record(UData2&& data, ast_node node)
-            : userdata(std::forward<UData2>(data)),
-              node(std::move(node))
-        {}
-
-        friend std::ostream& operator<<(std::ostream& out, ast_record const& rec)
-        {
-            std::visit(overloaded{
-                           [&out] (variable_t const& var) { out << var.name; },
-                           [&out] (binary_operation const& op)
-            {
-                out << '(';
-                switch (op.tag)
-                {
-                case parsing_context<UD>::node_tag::FORALL:
-                    out << '\\' << *op.args[0] << "." << *op.args[1];
-                    break;
-                case parsing_context<UD>::node_tag::APPLICATION:
-                    out << *op.args[0] << " " << *op.args[1];
-                }
-                out << ')';
-            }}, rec.node);
-
-            return out;
-        }
-
-        UD          userdata;
-        ast_node    node;
-    };
-
-    using ast_record_ptr = std::unique_ptr<ast_record>;
-
-    struct variable_t
-    {
-        std::string name;
-    };
-
-    enum class node_tag
-    {
-        FORALL,
-        APPLICATION
-    };
-
-    struct binary_operation
-    {
-        binary_operation(node_tag tag, ast_record_ptr lhs, ast_record_ptr rhs)
-            : tag(tag),
-              args{std::move(lhs), std::move(rhs)}
-        {}
-
-        node_tag            tag;
-        ast_record_ptr  args[2];
-    };
-
     enum class token_type
     {
         EMPTY,
@@ -86,7 +94,6 @@ struct parsing_context
         OPEN_PARANTH,
         CLOSING_PARANTH,
     };
-
 
     parsing_context()
         : current_token(token_type::EMPTY)
@@ -139,10 +146,16 @@ struct parsing_context
         return tail;
     }
 
-    ast_record_ptr parse_lambda(std::string_view str)
+    ast_record_ptr<UD> parse_lambda(std::string_view str)
     {
         tail = std::move(str);
         return parse_expression();
+    }
+
+    void reset()
+    {
+        tail = std::string_view();
+        current_token = token_type ::EMPTY;
     }
 
 private:
@@ -162,6 +175,7 @@ private:
         skip_chars(cnt);
     }
 
+    [[nodiscard]]
     constexpr bool is_varname_char(char c) const
     {
         return (c >= 'a' && c <= 'z')
@@ -182,18 +196,16 @@ private:
         skip_chars(i);
     }
 
-
-    ast_record_ptr parse_variable()
+    ast_record_ptr<UD> parse_variable()
     {
         auto token = get_token();
 
         assert(token == token_type::VARNAME);
 
-        return std::make_unique<ast_record>(UD{},
-                                            variable_t{std::move(get_varname())});
+        return std::make_unique<ast_record<UD>>(variable_t{std::move(get_varname())});
     }
 
-    ast_record_ptr parse_atom()
+    ast_record_ptr<UD> parse_atom()
     {
         auto token = get_token();
 
@@ -214,7 +226,7 @@ private:
         }
     }
 
-    ast_record_ptr combine_binary_op(std::vector<ast_record_ptr>& args,
+    ast_record_ptr<UD> combine_binary_op(std::vector<ast_record_ptr<UD>>& args,
                                         node_tag tag)
     {
         switch (tag)
@@ -222,15 +234,12 @@ private:
         case node_tag::FORALL:
             while (args.size() > 1)
             {
-                ast_record_ptr rhs = std::move(args.back());
+                ast_record_ptr<UD> rhs = std::move(args.back());
                 args.pop_back();
-                ast_record_ptr lhs = std::move(args.back());
+                ast_record_ptr<UD> lhs = std::move(args.back());
                 args.pop_back();
 
-                args.push_back(std::make_unique<ast_record>(UD{},
-                                                              binary_operation(tag,
-                                                                               std::move(lhs),
-                                                                               std::move(rhs))));
+                args.push_back(std::make_unique<ast_record<UD>>(binary_operation(tag, std::move(lhs), std::move(rhs))));
             }
         case node_tag::APPLICATION:
             for (size_t l = 0, r = args.size() - 1; l < r; ++l, --r)
@@ -238,24 +247,21 @@ private:
 
             while (args.size() > 1)
             {
-                ast_record_ptr lhs = std::move(args.back());
+                ast_record_ptr<UD> lhs = std::move(args.back());
                 args.pop_back();
-                ast_record_ptr rhs = std::move(args.back());
+                ast_record_ptr<UD> rhs = std::move(args.back());
                 args.pop_back();
 
-                args.push_back(std::make_unique<ast_record>(UD{},
-                                                              binary_operation(tag,
-                                                                               std::move(lhs),
-                                                                               std::move(rhs))));
+                args.push_back(std::make_unique<ast_record<UD>>(binary_operation(tag, std::move(lhs), std::move(rhs))));
             }
         }
 
         return std::move(args[0]);
     }
 
-    ast_record_ptr parse_application()
+    ast_record_ptr<UD> parse_application()
     {
-        std::vector<ast_record_ptr> applicants;
+        std::vector<ast_record_ptr<UD>> applicants;
         applicants.push_back(parse_atom());
 
         do
@@ -280,21 +286,17 @@ private:
         } while (true);
     }
 
-    ast_record_ptr parse_expression(bool token_read = false)
+    ast_record_ptr<UD> parse_expression(bool token_read = false)
     {
         auto tok = (token_read) ? get_token() : read_token();
         switch (tok)
         {
         case token_type::FORALL_VARNAME:
         {
-            ast_record_ptr lhs
-                    = std::make_unique<ast_record>(UD{}, variable_t{std::move(get_varname())});
+            ast_record_ptr<UD> lhs = std::make_unique<ast_record<UD>>(variable_t{std::move(get_varname())});
             auto rhs = parse_expression();
 
-            return std::make_unique<ast_record>(UD{},
-                                                  binary_operation(node_tag::FORALL,
-                                                                   std::move(lhs),
-                                                                   std::move(rhs)));
+            return std::make_unique<ast_record<UD>>(binary_operation(node_tag::FORALL, std::move(lhs), std::move(rhs)));
         }
         default:
             return parse_application();
