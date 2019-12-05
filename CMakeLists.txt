@@ -1,4 +1,4 @@
-project(lab0)
+project(TT2019)
 
 cmake_minimum_required(VERSION 3.10)
 
@@ -12,7 +12,7 @@ endif()
 
 add_subdirectory(3rd-party/)
 
-add_executable(task0_testing task0_testing.cpp)
-target_link_libraries(task0_testing gtest)
+add_executable(parser_testing parser_testing.cpp)
+target_link_libraries(parser_testing gtest)
 
 add_executable(task0 task0.cpp)
