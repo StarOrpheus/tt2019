@@ -63,7 +63,7 @@ TEST(correctness, local_application)
     test_str(str, result);
 }
 
-TEST(author, sample1)
+TEST(author, task1_sample1)
 {
     constexpr auto str = "\\a.\\b.a b c (\\d.e \\f.g) h";
     constexpr auto result = "(\\a.(\\b.((((a b) c) (\\d.(e (\\f.g)))) h)))";
@@ -71,7 +71,7 @@ TEST(author, sample1)
     test_str(str, result);
 }
 
-TEST(author, sample2)
+TEST(author, task1_sample2)
 {
     constexpr auto str = "((a\\bbb.c)d)e\nf\tg";
     constexpr auto result = "(((((a (\\bbb.c)) d) e) f) g)";
