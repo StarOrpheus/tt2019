@@ -35,18 +35,19 @@ struct ast_record
               userdata(this)
     {}
 
-    friend std::ostream& operator<<(std::ostream& out, ast_record const& rec)
+    friend std::ostream& operator<<(std::ostream& out, ast_record<UD> const& rec)
     {
         switch (rec.node.index())
         {
         case 0:
         {
             auto& name = std::get<0>(rec.node);
-            out << name;
+            out << name.name;
+            break;
         }
         case 1:
         {
-            auto& op = std::get<0>(rec.node);
+            auto& op = std::get<1>(rec.node);
             out << '(';
             switch (op.tag)
             {
@@ -55,8 +56,12 @@ struct ast_record
                 break;
             case node_tag::APPLICATION:
                 out << *op.args[0] << " " << *op.args[1];
+                break;
+            default:
+                assert(false);
             }
             out << ')';
+            break;
         }
         }
 
@@ -89,6 +94,9 @@ struct empty_userdata
         assert(&owner->userdata == this);
     };
 };
+
+using empty_ast_rec = ast_record<empty_userdata>;
+using empty_ast_rec_ptr = ast_record_ptr<empty_userdata>;
 
 template<typename UD>
 struct parsing_context
@@ -153,9 +161,9 @@ struct parsing_context
         return tail;
     }
 
-    ast_record_ptr<UD> parse_lambda(std::string_view str)
+    ast_record_ptr<UD> parse_lambda(std::string_view const& str)
     {
-        tail = std::move(str);
+        tail = str;
         return parse_expression();
     }
 
@@ -296,18 +304,15 @@ private:
     ast_record_ptr<UD> parse_expression(bool token_read = false)
     {
         auto tok = (token_read) ? get_token() : read_token();
-        switch (tok)
-        {
-        case token_type::FORALL_VARNAME:
+        if (tok == token_type::FORALL_VARNAME)
         {
             ast_record_ptr<UD> lhs = std::make_unique<ast_record<UD>>(variable_t{std::move(get_varname())});
             auto rhs = parse_expression();
 
             return std::make_unique<ast_record<UD>>(binary_operation(node_tag::FORALL, std::move(lhs), std::move(rhs)));
         }
-        default:
+        else
             return parse_application();
-        }
     }
 
 private:
