@@ -16,5 +16,3 @@ add_executable(parser_testing parser_testing.cpp)
 target_link_libraries(parser_testing gtest)
 
 add_executable(task0 task0.cpp)
-
-add_executable(task3 task3.cpp)
