@@ -37,21 +37,28 @@ struct ast_record
 
     friend std::ostream& operator<<(std::ostream& out, ast_record const& rec)
     {
-        std::visit(overloaded{
-                [&out] (variable_t const& var) { out << var.name; },
-                [&out] (binary_operation<UD> const& op)
-                {
-                    out << '(';
-                    switch (op.tag)
-                    {
-                        case node_tag::FORALL:
-                            out << '\\' << *op.args[0] << "." << *op.args[1];
-                            break;
-                        case node_tag::APPLICATION:
-                            out << *op.args[0] << " " << *op.args[1];
-                    }
-                    out << ')';
-                }}, rec.node);
+        switch (rec.node.index())
+        {
+        case 0:
+        {
+            auto& name = std::get<0>(rec.node);
+            out << name;
+        }
+        case 1:
+        {
+            auto& op = std::get<0>(rec.node);
+            out << '(';
+            switch (op.tag)
+            {
+            case node_tag::FORALL:
+                out << '\\' << *op.args[0] << "." << *op.args[1];
+                break;
+            case node_tag::APPLICATION:
+                out << *op.args[0] << " " << *op.args[1];
+            }
+            out << ')';
+        }
+        }
 
         return out;
     }
