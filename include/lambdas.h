@@ -16,6 +16,11 @@ struct binary_operation;
 struct variable_t
 {
     std::string name;
+
+    explicit operator std::string const&()
+    {
+        return name;
+    }
 };
 
 enum class node_tag
