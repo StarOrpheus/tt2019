@@ -270,7 +270,7 @@ int main()
         return err;
 
     /**
-     * @m   Number of recutions
+     * @m   Number of reductions
      * @k   Output lambda after each k reductions
      */
     size_t m, k;
