@@ -15,6 +15,6 @@ add_subdirectory(3rd-party/)
 add_executable(parser_testing parser_testing.cpp)
 target_link_libraries(parser_testing gtest)
 
-add_executable(task0 task0.cpp)
+add_executable(task1 task1.cpp)
 add_executable(task2 task2.cpp)
 add_executable(lambda_to_dot vis.cpp)
