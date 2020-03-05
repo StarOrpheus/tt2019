@@ -6,6 +6,7 @@
 #include <ostream>
 #include <cassert>
 #include <vector>
+#include <unordered_map>
 
 template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
 template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
@@ -25,7 +26,15 @@ enum class node_tag
 };
 
 template<typename UD>
-using ast_node = std::variant<variable_t, binary_operation<UD>>;
+struct ast_record;
+
+template<typename UD>
+using ast_node = std::variant<variable_t, binary_operation<UD>, std::shared_ptr<ast_record<UD>>>;
+
+using rename_map_t = std::unordered_map<std::string, std::string>;
+
+template<typename UD>
+using ast_record_ptr = std::unique_ptr<ast_record<UD>>;
 
 template<typename UD>
 struct ast_record
@@ -35,14 +44,83 @@ struct ast_record
               userdata(this)
     {}
 
+    ast_record(ast_node<UD> node, UD other)
+            : node(std::move(node)),
+              userdata(std::move(other))
+    {}
+
+    ast_record<UD>& child(uint8_t id)
+    {
+        if (node.index() != 1)
+        {
+            assert(false);
+            return *this;
+        }
+
+        return *std::get<1>(node).args[id];
+    }
+
+    ast_record_ptr<UD>& child_ptr(uint8_t id)
+    {
+        if (node.index() != 1)
+        {
+            assert(false);
+            exit(-1);
+        }
+
+        return std::get<1>(node).args[id];
+    }
+
+    [[nodiscard]]
+    bool has_node_tag(node_tag tag)
+    {
+        switch (node.index())
+        {
+        case 0:
+            return false;
+        case 1:
+            return std::get<1>(node).tag == tag;
+        case 2:
+            return std::get<2>(node)->has_node_tag(tag);
+        default:
+            assert(false);
+            return false;
+        }
+    }
+
+    [[nodiscard]]
+    ast_record_ptr<UD> deep_copy() const
+    {
+        switch (node.index())
+        {
+        case 0:
+        {
+            auto& rec = std::get<0>(node);
+            return std::make_unique<ast_record<UD>>(ast_node<UD>{rec}, userdata);
+        }
+        case 1:
+        {
+            auto& rec = std::get<1>(node);
+            return std::make_unique<ast_record<UD>>(ast_node<UD>{rec.deep_copy()}, userdata);
+        }
+        case 2:
+        {
+            auto& rec = std::get<2>(node);
+            return rec->deep_copy();
+        }
+        default:
+            assert(false);
+            return {nullptr};
+        }
+    }
+
     friend std::ostream& operator<<(std::ostream& out, ast_record<UD> const& rec)
     {
         switch (rec.node.index())
         {
         case 0:
         {
-            auto& name = std::get<0>(rec.node);
-            out << name.name;
+            out << std::get<0>(rec.node).name;
             break;
         }
         case 1:
@@ -73,15 +151,18 @@ struct ast_record
 };
 
 template<typename UD>
-using ast_record_ptr = std::unique_ptr<ast_record<UD>>;
-
-template<typename UD>
 struct binary_operation
 {
     binary_operation(node_tag tag, ast_record_ptr<UD> lhs, ast_record_ptr<UD> rhs)
             : tag(tag),
               args{std::move(lhs), std::move(rhs)}
     {}
+
+    [[nodiscard]]
+    binary_operation<UD> deep_copy() const
+    {
+        return binary_operation(tag, args[0]->deep_copy(), args[1]->deep_copy());
+    }
 
     node_tag            tag;
     ast_record_ptr<UD>  args[2];
@@ -319,4 +400,42 @@ private:
     std::string_view    tail;
     token_type          current_token;
     std::string         varname;
+};
+
+struct hashing_userdata
+{
+    /**
+     * Public "secret" is ridiculous, but anyway
+     */
+    constexpr static size_t secret = 31;
+
+    explicit hashing_userdata(ast_record<hashing_userdata>* owner)
+    {
+        assert(&owner->userdata == this);
+
+        std::visit(
+                overloaded {
+                        [this] (variable_t const& var)
+                        {
+                            hashcode = std::hash<std::string>()(var.name);
+                        },
+                        [this] (binary_operation<hashing_userdata> const& op)
+                        {
+                            hashcode = op.args[0]->userdata.hashcode * 31u;
+                            hashcode += (op.tag == node_tag::FORALL ? 42u : 971u);
+                            hashcode *= 31u;
+                            hashcode += op.args[0]->userdata.hashcode;
+                            hashcode *= 31u;
+                            hashcode += 0xcaffab27;
+                        },
+                        [this] (std::shared_ptr<ast_record<hashing_userdata>> const& ptr)
+                        {
+                            hashcode = ptr->userdata.hashcode * 17 + 911;
+                        }
+                },
+                owner->node
+        );
+    };
+
+    size_t hashcode{0};
 };
