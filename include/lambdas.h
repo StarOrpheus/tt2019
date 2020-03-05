@@ -146,6 +146,14 @@ struct ast_record
             out << ')';
             break;
         }
+        case 2:
+        {
+            auto& ptr = std::get<2>(rec.node);
+            out << *ptr;
+            break;
+        }
+        default:
+            assert(false && "Unexpected node type!");
         }
 
         return out;
